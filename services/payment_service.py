@@ -12,7 +12,7 @@ async def create_cryptobot_invoice(amount_usd: float, description: str, token: s
     }
     payload = {
         "asset": "USDT",
-        "amount": str(amount_usd),
+        "amount": f"{amount_usd:.2f}",
         "description": description
     }
 
@@ -38,9 +38,9 @@ async def create_xrocket_invoice(amount_usd: float, description: str, token: str
         "Content-Type": "application/json"
     }
 
-    # priceAmount передается строкой, как требует спецификация xRocket API
+    # Принудительно форматируем сумму в строку с 2 знаками после запятой (например, "3.00", "7.00", "24.00")
     payload = {
-        "priceAmount": str(amount_usd),
+        "priceAmount": f"{amount_usd:.2f}",
         "priceCurrency": "USDT",
         "currency": "USDT",
         "description": description,
