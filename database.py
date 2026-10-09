@@ -1,5 +1,6 @@
 import sqlite3
 import datetime
+import os
 
 DB_NAME = "database.db"
 
@@ -13,8 +14,6 @@ def get_connection():
 def init_db():
     conn = get_connection()
     cursor = conn.cursor()
-
-    # Таблица пользователей и срока действия подписки
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS users (
             user_id INTEGER PRIMARY KEY,
@@ -22,8 +21,6 @@ def init_db():
             subscription_until TEXT
         )
     """)
-
-    # Таблица подключенных VK аккаунтов
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS vk_accounts (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -33,13 +30,11 @@ def init_db():
             friends INTEGER
         )
     """)
-
     conn.commit()
     conn.close()
 
 
 def add_user(user_id: int):
-    """Регистрирует пользователя в базе при первом запуске (/start)"""
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute("SELECT user_id FROM users WHERE user_id = ?", (user_id,))
@@ -54,7 +49,14 @@ def add_user(user_id: int):
 
 
 def get_user_subscription(user_id: int):
-    """Проверяет статус подписки и возвращает дату окончания"""
+    admin_ids = [int(i.strip()) for i in os.getenv("ADMIN_IDS", "").split(",") if i.strip()]
+    if user_id in admin_ids:
+        return {
+            "active": True,
+            "expire_dt": datetime.datetime(2099, 12, 31, 23, 59),
+            "expire_str": "🟢 Вечная (Админ)"
+        }
+
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute("SELECT subscription_until FROM users WHERE user_id = ?", (user_id,))
@@ -79,11 +81,6 @@ def get_user_subscription(user_id: int):
 
 
 def extend_subscription(user_id: int, days: int = 30):
-    """
-    Начисляет подписку.
-    Если у юзера уже есть активная подписка, дни суммируются с текущей датой окончания.
-    Если истекла — отсчет идет от текущего момента.
-    """
     conn = get_connection()
     cursor = conn.cursor()
 
@@ -132,3 +129,14 @@ def get_user_vk_accounts(user_id: int):
     rows = cursor.fetchall()
     conn.close()
     return rows
+
+
+def get_stats():
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT COUNT(*) FROM users")
+    users_count = cursor.fetchone()[0]
+    cursor.execute("SELECT COUNT(*) FROM vk_accounts")
+    accounts_count = cursor.fetchone()[0]
+    conn.close()
+    return users_count, accounts_count
