@@ -7,9 +7,9 @@ from aiogram.fsm.context import FSMContext
 from states.auth import AuthStates
 from keyboards.reply import get_main_keyboard, get_cancel_keyboard
 from database import (
-    add_user, 
-    get_user_subscription, 
-    save_vk_account, 
+    add_user,
+    get_user_subscription,
+    save_vk_account,
     get_user_vk_accounts
 )
 from services.vk_service import check_vk_account
@@ -19,14 +19,15 @@ router = Router()
 
 ADMIN_IDS = [int(i.strip()) for i in os.getenv("ADMIN_IDS", "").split(",") if i.strip()]
 
+
 @router.message(Command("start"))
 async def cmd_start(message: Message, state: FSMContext):
     await state.clear()
     add_user(message.from_user.id)
     sub = get_user_subscription(message.from_user.id)
-    
+
     is_admin = message.from_user.id in ADMIN_IDS
-    
+
     text = (
         f"🤖 **Добро пожаловать в Aegis VK!**\n\n"
         f"💎 Статус подписки: {sub['expire_str']}\n\n"
@@ -34,17 +35,19 @@ async def cmd_start(message: Message, state: FSMContext):
     )
     await message.answer(text, reply_markup=get_main_keyboard(is_admin), parse_mode="Markdown")
 
+
 @router.message(F.text == "❌ Отмена")
 async def cancel_handler(message: Message, state: FSMContext):
     await state.clear()
     is_admin = message.from_user.id in ADMIN_IDS
     await message.answer("❌ Действие отменено.", reply_markup=get_main_keyboard(is_admin))
 
+
 @router.message(F.text == "👤 Профиль")
 async def profile_handler(message: Message):
     sub = get_user_subscription(message.from_user.id)
     accounts = get_user_vk_accounts(message.from_user.id)
-    
+
     text = (
         f"👤 **Ваш профиль:**\n"
         f"🆔 ID: `{message.from_user.id}`\n"
@@ -53,24 +56,27 @@ async def profile_handler(message: Message):
     )
     await message.answer(text, parse_mode="Markdown")
 
+
 @router.message(F.text == "📋 Мои аккаунты")
 async def my_accounts_handler(message: Message):
     accounts = get_user_vk_accounts(message.from_user.id)
     if not accounts:
         await message.answer("❌ У вас пока нет подключенных VK аккаунтов. Нажмите «🔑 Добавить VK аккаунт».")
         return
-        
+
     text = "📋 **Ваши подключенные аккаунты VK:**\n\n"
     for idx, acc in enumerate(accounts, 1):
         text += f"{idx}. **{acc['name']}** (Друзей: {acc['friends']})\n"
-        
+
     await message.answer(text, parse_mode="Markdown")
+
 
 @router.message(F.text == "🔑 Добавить VK аккаунт")
 async def add_account_start(message: Message, state: FSMContext):
     sub = get_user_subscription(message.from_user.id)
     if not sub["active"]:
-        await message.answer("❌ Для добавления аккаунтов необходима активная подписка! Купите ее в разделе «💎 Купить подписку».")
+        await message.answer(
+            "❌ Для добавления аккаунтов необходима активная подписка! Купите ее в разделе «💎 Купить подписку».")
         return
 
     await state.set_state(AuthStates.waiting_for_token)
@@ -81,13 +87,14 @@ async def add_account_start(message: Message, state: FSMContext):
     )
     await message.answer(text, reply_markup=get_cancel_keyboard(), parse_mode="Markdown")
 
+
 @router.message(AuthStates.waiting_for_token)
 async def got_token(message: Message, state: FSMContext):
     raw_token = message.text.strip()
-    
+
     res = await check_vk_account(raw_token)
     is_admin = message.from_user.id in ADMIN_IDS
-    
+
     if res.get("valid"):
         save_vk_account(message.from_user.id, res["token"], res["name"], res["friends"])
         await state.clear()
@@ -103,38 +110,84 @@ async def got_token(message: Message, state: FSMContext):
             parse_mode="Markdown"
         )
 
+
 @router.message(F.text == "💎 Купить подписку")
 async def buy_subscription_handler(message: Message):
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🤖 Оплатить через CryptoBot (USDT)", callback_data="pay_cryptobot")],
-        [InlineKeyboardButton(text="🚀 Оплатить через XRocket (USDT)", callback_data="pay_xrocket")]
+        [InlineKeyboardButton(text="⏳ 1 день — 1$", callback_data="select_days_1")],
+        [InlineKeyboardButton(text="📅 7 дней — 3$", callback_data="select_days_7")],
+        [InlineKeyboardButton(text="💎 30 дней — 5$", callback_data="select_days_30")]
     ])
-    await message.answer("💎 **Выберите способ оплаты подписки (30 дней):**", reply_markup=keyboard, parse_mode="Markdown")
+    await message.answer("💎 **Выберите срок подписки:**", reply_markup=keyboard, parse_mode="Markdown")
+
+
+@router.callback_query(F.data.startswith("select_days_"))
+async def select_gateway_handler(callback: CallbackQuery):
+    days = callback.data.split("_")[2]
+
+    # Устанавливаем цены в зависимости от выбранных дней
+    prices = {"1": 1.0, "7": 3.0, "30": 5.0}
+    price = prices.get(days, 5.0)
+
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🤖 CryptoBot (USDT)", callback_data=f"pay_cryptobot_{days}_{price}")],
+        [InlineKeyboardButton(text="🚀 XRocket (USDT)", callback_data=f"pay_xrocket_{days}_{price}")],
+        [InlineKeyboardButton(text="◀️ Назад", callback_data="back_to_tariffs")]
+    ])
+    await callback.message.edit_text(
+        f"💳 **Выбран тариф:** {days} дн. ({price} USDT)\nВыберите платежную систему:",
+        reply_markup=keyboard,
+        parse_mode="Markdown"
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "back_to_tariffs")
+async def back_to_tariffs(callback: CallbackQuery):
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="⏳ 1 день — 1$", callback_data="select_days_1")],
+        [InlineKeyboardButton(text="📅 7 дней — 3$", callback_data="select_days_7")],
+        [InlineKeyboardButton(text="💎 30 дней — 5$", callback_data="select_days_30")]
+    ])
+    await callback.message.edit_text("💎 **Выберите срок подписки:**", reply_markup=keyboard, parse_mode="Markdown")
+    await callback.answer()
+
 
 @router.callback_query(F.data.startswith("pay_"))
 async def process_payment(callback: CallbackQuery):
-    action = callback.data.split("_")[1]
-    amount = 5.0
-    
+    # Формат: pay_{gateway}_{days}_{price}
+    parts = callback.data.split("_")
+    gateway = parts[1]
+    days = int(parts[2])
+    amount = float(parts[3])
+
+    description = f"Подписка Aegis VK на {days} дн."
+
     cryptobot_token = os.getenv("CRYPTOBOT_TOKEN", "")
     xrocket_token = os.getenv("XROCKET_TOKEN", "")
-    
-    if action == "cryptobot":
-        res = await create_cryptobot_invoice(amount, cryptobot_token)
-    elif action == "xrocket":
-        res = await create_xrocket_invoice(amount, xrocket_token)
+
+    if gateway == "cryptobot":
+        res = await create_cryptobot_invoice(amount, description, cryptobot_token)
+    elif gateway == "xrocket":
+        res = await create_xrocket_invoice(amount, description, xrocket_token)
     else:
         await callback.answer("Неизвестный способ оплаты", show_alert=True)
         return
-        
+
     if res.get("success"):
         pay_url = res["pay_url"]
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="🔗 Перейти к оплате", url=pay_url)]
         ])
-        await callback.message.edit_text("💳 **Счет на оплату создан!**\nНажмите кнопку ниже для совершения платежа:", reply_markup=keyboard, parse_mode="Markdown")
+        await callback.message.edit_text(
+            f"💳 **Счет на оплату создан ({days} дн. / {amount} USDT)!**\nНажмите кнопку ниже для совершения платежа:",
+            reply_markup=keyboard,
+            parse_mode="Markdown"
+        )
     else:
         err = res.get("error", "Ошибка создания счета")
+        if len(err) > 180:
+            err = err[:180] + "..."
         await callback.answer(f"❌ Ошибка: {err}", show_alert=True)
-    
+
     await callback.answer()
