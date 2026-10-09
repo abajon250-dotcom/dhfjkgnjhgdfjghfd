@@ -161,9 +161,9 @@ async def got_token(message: Message, state: FSMContext):
 @router.message(F.text == "💎 Купить подписку")
 async def buy_subscription_handler(message: Message):
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="⏳ 1 день — 1 USDT", callback_data="select_days_1")],
-        [InlineKeyboardButton(text="📅 7 дней — 3 USDT", callback_data="select_days_7")],
-        [InlineKeyboardButton(text="💎 30 дней — 5 USDT", callback_data="select_days_30")]
+        [InlineKeyboardButton(text="⏳ 1 день — 3 USDT", callback_data="select_days_1")],
+        [InlineKeyboardButton(text="📅 7 дней — 7 USDT", callback_data="select_days_7")],
+        [InlineKeyboardButton(text="💎 30 дней — 24 USDT", callback_data="select_days_30")]
     ])
     await message.answer("💎 **Выберите срок подписки:**", reply_markup=keyboard, parse_mode="Markdown")
 
@@ -171,8 +171,8 @@ async def buy_subscription_handler(message: Message):
 @router.callback_query(F.data.startswith("select_days_"))
 async def select_gateway_handler(callback: CallbackQuery):
     days = callback.data.split("_")[2]
-    prices = {"1": 1.0, "7": 3.0, "30": 5.0}
-    price = prices.get(days, 5.0)
+    prices = {"1": 3.0, "7": 7.0, "30": 24.0}
+    price = prices.get(days, 24.0)
 
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🤖 CryptoBot (USDT)", callback_data=f"pay_cryptobot_{days}_{price}")],
@@ -190,9 +190,9 @@ async def select_gateway_handler(callback: CallbackQuery):
 @router.callback_query(F.data == "back_to_tariffs")
 async def back_to_tariffs(callback: CallbackQuery):
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="⏳ 1 день — 1 USDT", callback_data="select_days_1")],
-        [InlineKeyboardButton(text="📅 7 дней — 3 USDT", callback_data="select_days_7")],
-        [InlineKeyboardButton(text="💎 30 дней — 5 USDT", callback_data="select_days_30")]
+        [InlineKeyboardButton(text="⏳ 1 день — 3 USDT", callback_data="select_days_1")],
+        [InlineKeyboardButton(text="📅 7 дней — 7 USDT", callback_data="select_days_7")],
+        [InlineKeyboardButton(text="💎 30 дней — 24 USDT", callback_data="select_days_30")]
     ])
     await callback.message.edit_text("💎 **Выберите срок подписки:**", reply_markup=keyboard, parse_mode="Markdown")
     await callback.answer()

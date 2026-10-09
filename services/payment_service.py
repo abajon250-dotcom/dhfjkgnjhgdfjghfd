@@ -38,9 +38,9 @@ async def create_xrocket_invoice(amount_usd: float, description: str, token: str
         "Content-Type": "application/json"
     }
 
-    # Используем только правильные поля без конфликтов с amount
+    # priceAmount передается строкой, как требует спецификация xRocket API
     payload = {
-        "priceAmount": float(amount_usd),
+        "priceAmount": str(amount_usd),
         "priceCurrency": "USDT",
         "currency": "USDT",
         "description": description,
