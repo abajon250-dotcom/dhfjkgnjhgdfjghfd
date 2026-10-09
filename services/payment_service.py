@@ -17,6 +17,7 @@ _HTTP_HEADERS = {
 
 XROCKET_INVOICES_URL = "https://pay.api.xrocket.exchange/api/v1/invoices"
 CRYPTOBOT_INVOICE_URL = "https://pay.crypt.bot/api/createInvoice"
+CRYPTOBOT_GET_INVOICES_URL = "https://pay.crypt.bot/api/getInvoices"
 
 
 def _format_amount(amount: float) -> str:
@@ -42,11 +43,11 @@ def _extract_xrocket_pay_url(invoice: dict) -> str | None:
         return None
     links = invoice.get("links") if isinstance(invoice.get("links"), dict) else {}
     return (
-        links.get("telegramBotLink")
-        or links.get("telegramMiniAppLink")
-        or links.get("webLink")
-        or invoice.get("link")
-        or (invoice.get("url") if isinstance(invoice.get("url"), str) else None)
+            links.get("telegramBotLink")
+            or links.get("telegramMiniAppLink")
+            or links.get("webLink")
+            or invoice.get("link")
+            or (invoice.get("url") if isinstance(invoice.get("url"), str) else None)
     )
 
 
@@ -84,20 +85,40 @@ async def create_cryptobot_invoice(amount_usd: float, description: str, token: s
     if isinstance(data, dict) and data.get("ok"):
         result = data.get("result") or {}
         pay_url = result.get("bot_invoice_url") or result.get("pay_url") or result.get("mini_app_invoice_url")
-        if pay_url:
-            return {"success": True, "pay_url": pay_url}
-        return {"success": False, "error": "CryptoBot не вернул ссылку на оплату."}
+        invoice_id = result.get("invoice_id")
+        if pay_url and invoice_id:
+            return {"success": True, "pay_url": pay_url, "invoice_id": str(invoice_id)}
+        return {"success": False, "error": "CryptoBot не вернул ссылку или ID счета."}
 
     return {"success": False, "error": f"Ошибка CryptoBot ({_problem_message(status, data)})"}
 
 
+async def check_cryptobot_invoice(invoice_id: str, token: str) -> bool:
+    token = (token or "").strip()
+    if not token or not invoice_id:
+        return False
+
+    payload = {"invoice_ids": [int(invoice_id)]}
+    headers = {"Crypto-Pay-API-Token": token}
+
+    try:
+        status, data = await _post_json(CRYPTOBOT_GET_INVOICES_URL, payload, headers)
+        if status == 200 and isinstance(data, dict) and data.get("ok"):
+            items = data.get("result", {}).get("items", [])
+            if items and items[0].get("status") == "paid":
+                return True
+    except Exception:
+        logger.exception("Error checking CryptoBot invoice")
+    return False
+
+
 async def create_xrocket_invoice(
-    amount_usd: float,
-    description: str,
-    token: str,
-    *,
-    user_id: int | None = None,
-    username: str | None = None,
+        amount_usd: float,
+        description: str,
+        token: str,
+        *,
+        user_id: int | None = None,
+        username: str | None = None,
 ):
     token = (token or "").strip()
     if not token:
@@ -128,16 +149,42 @@ async def create_xrocket_invoice(
         logger.exception("xRocket connection error")
         return {"success": False, "error": f"Ошибка соединения с xRocket: {e}"}
 
-    logger.info("xRocket create invoice status=%s body=%s", status, data)
-
     invoice = data
     if isinstance(data, dict) and isinstance(data.get("data"), dict):
         invoice = data["data"]
 
     if status in (200, 201) and isinstance(invoice, dict):
         pay_url = _extract_xrocket_pay_url(invoice)
-        if pay_url:
-            return {"success": True, "pay_url": pay_url, "invoice_id": invoice.get("id")}
-        return {"success": False, "error": "xRocket создал счет, но не вернул ссылку на оплату."}
+        invoice_id = invoice.get("id") or invoice.get("invoiceId")
+        if pay_url and invoice_id:
+            return {"success": True, "pay_url": pay_url, "invoice_id": str(invoice_id)}
+        return {"success": False, "error": "xRocket создал счет, но не вернул ссылку или ID."}
 
     return {"success": False, "error": f"Ошибка xRocket ({_problem_message(status, data)})"}
+
+
+async def check_xrocket_invoice(invoice_id: str, token: str) -> bool:
+    token = (token or "").strip()
+    if not token or not invoice_id:
+        return False
+
+    url = f"{XROCKET_INVOICES_URL}/{invoice_id}"
+    headers = {**_HTTP_HEADERS, "Authorization": f"Bearer {token}"}
+    timeout = aiohttp.ClientTimeout(total=30)
+
+    async with aiohttp.ClientSession(timeout=timeout) as session:
+        async with session.get(url, headers=headers) as resp:
+            try:
+                data = await resp.json(content_type=None)
+            except Exception:
+                return False
+
+            invoice = data
+            if isinstance(data, dict) and isinstance(data.get("data"), dict):
+                invoice = data["data"]
+
+            if resp.status in (200, 201) and isinstance(invoice, dict):
+                status_str = str(invoice.get("status", "")).upper()
+                if status_str in ("PAID", "COMPLETED", "SUCCESS"):
+                    return True
+    return False

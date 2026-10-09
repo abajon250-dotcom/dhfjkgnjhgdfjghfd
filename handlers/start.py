@@ -2,6 +2,7 @@ from aiogram import Router, F
 from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
 
 from config import ADMIN_IDS, CRYPTOBOT_TOKEN, XROCKET_TOKEN
 from states.auth import AuthStates
@@ -11,12 +12,23 @@ from database import (
     get_user_subscription,
     save_vk_account,
     get_user_vk_accounts,
-    get_stats
+    get_stats,
+    extend_subscription
 )
 from services.vk_service import check_vk_account
-from services.payment_service import create_cryptobot_invoice, create_xrocket_invoice
+from services.payment_service import (
+    create_cryptobot_invoice,
+    check_cryptobot_invoice,
+    create_xrocket_invoice,
+    check_xrocket_invoice
+)
 
 router = Router()
+
+
+class AdminStates(StatesGroup):
+    waiting_for_user_id = State()
+    waiting_for_days = State()
 
 
 @router.message(Command("start"))
@@ -70,6 +82,8 @@ async def my_accounts_handler(message: Message):
     await message.answer(text, parse_mode="Markdown")
 
 
+# --- АДМИН-ПАНЕЛЬ И ВЫДАЧА ПОДПИСОК ---
+
 @router.message(F.text == "🛠 Админ-панель")
 async def admin_panel_handler(message: Message):
     if message.from_user.id not in ADMIN_IDS:
@@ -81,10 +95,11 @@ async def admin_panel_handler(message: Message):
         f"🛠 **Панель администратора Aegis VK**\n\n"
         f"👥 Всего пользователей в базе: **{users_count}**\n"
         f"🔗 Всего подключено VK аккаунтов: **{accounts_count}**\n"
-        f"👑 Статус: Вы авторизованы как владелец (вечная подписка активна)."
+        f"👑 Статус: Вы авторизованы как владелец."
     )
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="📊 Обновить статистику", callback_data="admin_refresh_stats")]
+        [InlineKeyboardButton(text="📊 Обновить статистику", callback_data="admin_refresh_stats")],
+        [InlineKeyboardButton(text="💎 Выдать подписку", callback_data="admin_grant_start")]
     ])
     await message.answer(text, reply_markup=keyboard, parse_mode="Markdown")
 
@@ -99,14 +114,81 @@ async def admin_refresh_stats(callback: CallbackQuery):
         f"🛠 **Панель администратора Aegis VK**\n\n"
         f"👥 Всего пользователей в базе: **{users_count}**\n"
         f"🔗 Всего подключено VK аккаунтов: **{accounts_count}**\n"
-        f"👑 Статус: Вы авторизованы как владелец (вечная подписка активна)."
+        f"👑 Статус: Вы авторизованы как владелец."
     )
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📊 Обновить статистику", callback_data="admin_refresh_stats")],
+        [InlineKeyboardButton(text="💎 Выдать подписку", callback_data="admin_grant_start")]
+    ])
     try:
-        await callback.message.edit_text(text, reply_markup=callback.message.reply_markup, parse_mode="Markdown")
+        await callback.message.edit_text(text, reply_markup=keyboard, parse_mode="Markdown")
     except Exception:
         pass
     await callback.answer("✅ Статистика обновлена!")
 
+
+@router.callback_query(F.data == "admin_grant_start")
+async def admin_grant_start(callback: CallbackQuery, state: FSMContext):
+    if callback.from_user.id not in ADMIN_IDS:
+        await callback.answer("❌ Нет доступа", show_alert=True)
+        return
+    await state.set_state(AdminStates.waiting_for_user_id)
+    await callback.message.answer("💎 Введите **Telegram ID** пользователя, которому нужно выдать подписку:",
+                                  parse_mode="Markdown")
+    await callback.answer()
+
+
+@router.message(AdminStates.waiting_for_user_id)
+async def admin_got_user_id(message: Message, state: FSMContext):
+    if message.from_user.id not in ADMIN_IDS:
+        return
+    try:
+        target_user_id = int(message.text.strip())
+    except ValueError:
+        await message.answer("❌ Неверный ID. Введите числовой Telegram ID:")
+        return
+
+    await state.update_data(target_user_id=target_user_id)
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="⏳ 1 день", callback_data="grant_days_1")],
+        [InlineKeyboardButton(text="📅 7 дней", callback_data="grant_days_7")],
+        [InlineKeyboardButton(text="💎 30 дней", callback_data="grant_days_30")]
+    ])
+    await message.answer(f"👤 Выбран пользователь: `{target_user_id}`\nВыберите срок подписки:", reply_markup=keyboard,
+                         parse_mode="Markdown")
+    await state.set_state(AdminStates.waiting_for_days)
+
+
+@router.callback_query(AdminStates.waiting_for_days, F.data.startswith("grant_days_"))
+async def admin_grant_finish(callback: CallbackQuery, state: FSMContext):
+    if callback.from_user.id not in ADMIN_IDS:
+        await callback.answer("❌ Нет доступа", show_alert=True)
+        return
+
+    days = int(callback.data.split("_")[2])
+    data = await state.get_data()
+    target_user_id = data.get("target_user_id")
+
+    new_expire = extend_subscription(target_user_id, days)
+    await state.clear()
+
+    await callback.message.edit_text(
+        f"✅ **Подписка успешно выдана!**\n👤 Пользователь: `{target_user_id}`\n⏳ Срок: +{days} дн.\n📅 Активна до: {new_expire}",
+        parse_mode="Markdown"
+    )
+
+    try:
+        await callback.bot.send_message(
+            target_user_id,
+            f"🎁 **Администратор выдал вам подписку!**\n⏳ Срок: {days} дн.\n📅 Действует до: {new_expire}",
+            parse_mode="Markdown"
+        )
+    except Exception:
+        pass
+    await callback.answer()
+
+
+# --- ДОБАВЛЕНИЕ VK АККАУНТА ---
 
 @router.message(F.text == "🔑 Добавить VK аккаунт")
 async def add_account_start(message: Message, state: FSMContext):
@@ -155,6 +237,8 @@ async def got_token(message: Message, state: FSMContext):
             parse_mode="Markdown"
         )
 
+
+# --- ПОКУПКА И ПРОВЕРКА ОПЛАТЫ ---
 
 @router.message(F.text == "💎 Купить подписку")
 async def buy_subscription_handler(message: Message):
@@ -222,11 +306,14 @@ async def process_payment(callback: CallbackQuery):
 
     if res.get("success"):
         pay_url = res["pay_url"]
+        invoice_id = res["invoice_id"]
+
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🔗 Перейти к оплате", url=pay_url)]
+            [InlineKeyboardButton(text="🔗 Перейти к оплате", url=pay_url)],
+            [InlineKeyboardButton(text="🔄 Проверить оплату", callback_data=f"check_{gateway}_{invoice_id}_{days}")]
         ])
         await callback.message.edit_text(
-            f"💳 **Счет на оплату создан ({days} дн. / {amount} USDT)!**\nНажмите кнопку ниже для совершения платежа:",
+            f"💳 **Счет на оплату создан ({days} дн. / {amount} USDT)!**\nПосле оплаты нажмите кнопку ниже для проверки:",
             reply_markup=keyboard,
             parse_mode="Markdown"
         )
@@ -237,3 +324,26 @@ async def process_payment(callback: CallbackQuery):
     if len(err) > 180:
         err = err[:180] + "..."
     await callback.answer(f"❌ {err}", show_alert=True)
+
+
+@router.callback_query(F.data.startswith("check_"))
+async def verify_payment(callback: CallbackQuery):
+    parts = callback.data.split("_")
+    gateway = parts[1]
+    invoice_id = parts[2]
+    days = int(parts[3])
+
+    is_paid = False
+    if gateway == "cryptobot":
+        is_paid = await check_cryptobot_invoice(invoice_id, CRYPTOBOT_TOKEN)
+    elif gateway == "xrocket":
+        is_paid = await check_xrocket_invoice(invoice_id, XROCKET_TOKEN)
+
+    if is_paid:
+        new_expire = extend_subscription(callback.from_user.id, days)
+        await callback.message.edit_text(
+            f"✅ **Оплата успешно подтверждена!**\n💎 Ваша подписка продлена на {days} дн.\n📅 Действует до: {new_expire}",
+            parse_mode="Markdown"
+        )
+    else:
+        await callback.answer("⏳ Платеж еще не поступил. Попробуйте через несколько секунд.", show_alert=True)
