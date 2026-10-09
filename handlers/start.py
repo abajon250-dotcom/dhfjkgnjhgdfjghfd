@@ -1,9 +1,9 @@
-import os
 from aiogram import Router, F
 from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 
+from config import ADMIN_IDS, CRYPTOBOT_TOKEN, XROCKET_TOKEN
 from states.auth import AuthStates
 from keyboards.reply import get_main_keyboard, get_cancel_keyboard
 from database import (
@@ -17,8 +17,6 @@ from services.vk_service import check_vk_account
 from services.payment_service import create_cryptobot_invoice, create_xrocket_invoice
 
 router = Router()
-
-ADMIN_IDS = [int(i.strip()) for i in os.getenv("ADMIN_IDS", "").split(",") if i.strip()]
 
 
 @router.message(Command("start"))
@@ -207,13 +205,17 @@ async def process_payment(callback: CallbackQuery):
 
     description = f"Подписка Aegis VK на {days} дн."
 
-    cryptobot_token = os.getenv("CRYPTOBOT_TOKEN", "")
-    xrocket_token = os.getenv("XROCKET_TOKEN", "")
-
     if gateway == "cryptobot":
-        res = await create_cryptobot_invoice(amount, description, cryptobot_token)
+        res = await create_cryptobot_invoice(amount, description, CRYPTOBOT_TOKEN)
     elif gateway == "xrocket":
-        res = await create_xrocket_invoice(amount, description, xrocket_token)
+        username = callback.from_user.username if callback.from_user else None
+        res = await create_xrocket_invoice(
+            amount,
+            description,
+            XROCKET_TOKEN,
+            user_id=callback.from_user.id,
+            username=username,
+        )
     else:
         await callback.answer("Неизвестный способ оплаты", show_alert=True)
         return
@@ -228,10 +230,10 @@ async def process_payment(callback: CallbackQuery):
             reply_markup=keyboard,
             parse_mode="Markdown"
         )
-    else:
-        err = res.get("error", "Ошибка создания счета")
-        if len(err) > 180:
-            err = err[:180] + "..."
-        await callback.answer(f"❌ {err}", show_alert=True)
+        await callback.answer()
+        return
 
-    await callback.answer()
+    err = res.get("error", "Ошибка создания счета")
+    if len(err) > 180:
+        err = err[:180] + "..."
+    await callback.answer(f"❌ {err}", show_alert=True)

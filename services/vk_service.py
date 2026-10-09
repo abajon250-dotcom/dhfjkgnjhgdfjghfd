@@ -44,8 +44,22 @@ async def get_vk_account(token: str):
     return await loop.run_in_executor(None, _check)
 
 
+def extract_vk_token(raw_acc: str) -> str:
+    raw = (raw_acc or "").strip().strip('"').strip("'")
+    if "access_token=" in raw:
+        token = raw.split("access_token=", 1)[1]
+        return token.split("&")[0].split("#")[0].strip()
+    if raw.lower().startswith("http"):
+        return raw
+    if ":" in raw and not raw.startswith("vk1."):
+        return raw.split(":")[-1].strip()
+    return raw
+
+
 async def check_vk_account(raw_acc: str):
-    token = raw_acc.split(":")[-1].strip() if ":" in raw_acc else raw_acc.strip()
+    token = extract_vk_token(raw_acc)
+    if not token:
+        return {"valid": False, "error": "Пустой токен"}
     res = await get_vk_account(token)
     if res.get("valid"):
         return {"valid": True, "token": token, "name": res["name"], "friends": res["friends"]}

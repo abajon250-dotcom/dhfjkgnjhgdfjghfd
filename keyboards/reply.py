@@ -1,5 +1,6 @@
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
 
+
 def get_main_keyboard(is_admin: bool = False):
     keyboard = [
         [KeyboardButton(text="🔑 Добавить VK аккаунт"), KeyboardButton(text="📋 Мои аккаунты")],
@@ -7,8 +8,9 @@ def get_main_keyboard(is_admin: bool = False):
     ]
     if is_admin:
         keyboard.append([KeyboardButton(text="🛠 Админ-панель")])
-        
+
     return ReplyKeyboardMarkup(keyboard=keyboard, resize_keyboard=True)
+
 
 def get_cancel_keyboard():
     return ReplyKeyboardMarkup(

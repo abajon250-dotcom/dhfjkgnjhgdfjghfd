@@ -1,6 +1,5 @@
 import sqlite3
 import datetime
-import os
 
 DB_NAME = "database.db"
 
@@ -53,7 +52,7 @@ def add_user(user_id: int):
 
 
 def get_user_subscription(user_id: int):
-    admin_ids = [int(i.strip()) for i in os.getenv("ADMIN_IDS", "").split(",") if i.strip()]
+    from config import ADMIN_IDS as admin_ids
     if user_id in admin_ids:
         return {
             "active": True,
