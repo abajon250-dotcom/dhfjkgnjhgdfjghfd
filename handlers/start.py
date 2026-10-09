@@ -10,7 +10,8 @@ from database import (
     add_user,
     get_user_subscription,
     save_vk_account,
-    get_user_vk_accounts
+    get_user_vk_accounts,
+    get_stats
 )
 from services.vk_service import check_vk_account
 from services.payment_service import create_cryptobot_invoice, create_xrocket_invoice
@@ -71,6 +72,41 @@ async def my_accounts_handler(message: Message):
     await message.answer(text, parse_mode="Markdown")
 
 
+@router.message(F.text == "🛠 Админ-панель")
+async def admin_panel_handler(message: Message):
+    if message.from_user.id not in ADMIN_IDS:
+        await message.answer("❌ У вас нет доступа к этой панели.")
+        return
+
+    users_count, accounts_count = get_stats()
+    text = (
+        f"🛠 **Панель администратора Aegis VK**\n\n"
+        f"👥 Всего пользователей в базе: **{users_count}**\n"
+        f"🔗 Всего подключено VK аккаунтов: **{accounts_count}**\n"
+        f"👑 Статус: Вы авторизованы как владелец (вечная подписка активна)."
+    )
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📊 Обновить статистику", callback_data="admin_refresh_stats")]
+    ])
+    await message.answer(text, reply_markup=keyboard, parse_mode="Markdown")
+
+
+@router.callback_query(F.data == "admin_refresh_stats")
+async def admin_refresh_stats(callback: CallbackQuery):
+    if callback.from_user.id not in ADMIN_IDS:
+        await callback.answer("❌ Нет доступа", show_alert=True)
+        return
+    users_count, accounts_count = get_stats()
+    text = (
+        f"🛠 **Панель администратора Aegis VK**\n\n"
+        f"👥 Всего пользователей в базе: **{users_count}**\n"
+        f"🔗 Всего подключено VK аккаунтов: **{accounts_count}**\n"
+        f"👑 Статус: Вы авторизованы как владелец (вечная подписка активна)."
+    )
+    await callback.message.edit_text(text, reply_markup=callback.message.reply_markup, parse_mode="Markdown")
+    await callback.answer("✅ Статистика обновлена!")
+
+
 @router.message(F.text == "🔑 Добавить VK аккаунт")
 async def add_account_start(message: Message, state: FSMContext):
     sub = get_user_subscription(message.from_user.id)
@@ -105,6 +141,14 @@ async def got_token(message: Message, state: FSMContext):
         )
     else:
         err = res.get("error", "Неизвестная ошибка")
+        if "ip address" in err.lower():
+            err = "Токен привязан к другому IP-адресу сервера. Сгенерируйте токен на облачном сервере."
+        elif "authorization failed" in err.lower():
+            err = "Ошибка авторизации: неверный или просроченный токен."
+
+        if len(err) > 180:
+            err = err[:180] + "..."
+
         await message.answer(
             f"❌ **Ошибка проверки токена:**\n`{err}`\n\nПопробуйте отправить другой токен или нажмите «❌ Отмена».",
             parse_mode="Markdown"
@@ -114,9 +158,9 @@ async def got_token(message: Message, state: FSMContext):
 @router.message(F.text == "💎 Купить подписку")
 async def buy_subscription_handler(message: Message):
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="⏳ 1 день — 1$", callback_data="select_days_1")],
-        [InlineKeyboardButton(text="📅 7 дней — 3$", callback_data="select_days_7")],
-        [InlineKeyboardButton(text="💎 30 дней — 5$", callback_data="select_days_30")]
+        [InlineKeyboardButton(text="⏳ 1 день — 1 USDT", callback_data="select_days_1")],
+        [InlineKeyboardButton(text="📅 7 дней — 3 USDT", callback_data="select_days_7")],
+        [InlineKeyboardButton(text="💎 30 дней — 5 USDT", callback_data="select_days_30")]
     ])
     await message.answer("💎 **Выберите срок подписки:**", reply_markup=keyboard, parse_mode="Markdown")
 
@@ -124,8 +168,6 @@ async def buy_subscription_handler(message: Message):
 @router.callback_query(F.data.startswith("select_days_"))
 async def select_gateway_handler(callback: CallbackQuery):
     days = callback.data.split("_")[2]
-
-    # Устанавливаем цены в зависимости от выбранных дней
     prices = {"1": 1.0, "7": 3.0, "30": 5.0}
     price = prices.get(days, 5.0)
 
@@ -145,9 +187,9 @@ async def select_gateway_handler(callback: CallbackQuery):
 @router.callback_query(F.data == "back_to_tariffs")
 async def back_to_tariffs(callback: CallbackQuery):
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="⏳ 1 день — 1$", callback_data="select_days_1")],
-        [InlineKeyboardButton(text="📅 7 дней — 3$", callback_data="select_days_7")],
-        [InlineKeyboardButton(text="💎 30 дней — 5$", callback_data="select_days_30")]
+        [InlineKeyboardButton(text="⏳ 1 день — 1 USDT", callback_data="select_days_1")],
+        [InlineKeyboardButton(text="📅 7 дней — 3 USDT", callback_data="select_days_7")],
+        [InlineKeyboardButton(text="💎 30 дней — 5 USDT", callback_data="select_days_30")]
     ])
     await callback.message.edit_text("💎 **Выберите срок подписки:**", reply_markup=keyboard, parse_mode="Markdown")
     await callback.answer()
@@ -155,7 +197,6 @@ async def back_to_tariffs(callback: CallbackQuery):
 
 @router.callback_query(F.data.startswith("pay_"))
 async def process_payment(callback: CallbackQuery):
-    # Формат: pay_{gateway}_{days}_{price}
     parts = callback.data.split("_")
     gateway = parts[1]
     days = int(parts[2])
@@ -188,6 +229,6 @@ async def process_payment(callback: CallbackQuery):
         err = res.get("error", "Ошибка создания счета")
         if len(err) > 180:
             err = err[:180] + "..."
-        await callback.answer(f"❌ Ошибка: {err}", show_alert=True)
+        await callback.answer(f"❌ {err}", show_alert=True)
 
     await callback.answer()
