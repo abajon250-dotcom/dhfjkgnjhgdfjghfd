@@ -103,7 +103,10 @@ async def admin_refresh_stats(callback: CallbackQuery):
         f"🔗 Всего подключено VK аккаунтов: **{accounts_count}**\n"
         f"👑 Статус: Вы авторизованы как владелец (вечная подписка активна)."
     )
-    await callback.message.edit_text(text, reply_markup=callback.message.reply_markup, parse_mode="Markdown")
+    try:
+        await callback.message.edit_text(text, reply_markup=callback.message.reply_markup, parse_mode="Markdown")
+    except Exception:
+        pass
     await callback.answer("✅ Статистика обновлена!")
 
 
@@ -142,7 +145,7 @@ async def got_token(message: Message, state: FSMContext):
     else:
         err = res.get("error", "Неизвестная ошибка")
         if "ip address" in err.lower():
-            err = "Токен привязан к другому IP-адресу сервера. Сгенерируйте токен на облачном сервере."
+            err = "Токен привязан к другому IP-адресу сервера. Сгенерируйте токен прямо на облачном сервере."
         elif "authorization failed" in err.lower():
             err = "Ошибка авторизации: неверный или просроченный токен."
 

@@ -38,12 +38,11 @@ async def create_xrocket_invoice(amount_usd: float, description: str, token: str
         "Content-Type": "application/json"
     }
 
-    # Передаем полный набор полей, чтобы API xRocket не запрашивал пропущенные параметры
+    # Используем только правильные поля без конфликтов с amount
     payload = {
-        "amount": float(amount_usd),
         "priceAmount": float(amount_usd),
-        "currency": "USDT",
         "priceCurrency": "USDT",
+        "currency": "USDT",
         "description": description,
         "commentsEnabled": False
     }
